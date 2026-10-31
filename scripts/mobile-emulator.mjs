@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Drive the native shell on an Android emulator, from WSL2.
+ * Drive the native shell on an Android emulator, from WSL2 or native Linux.
  *
- * The emulator is a Windows process and this repository is not, so every device
- * command goes through Windows' own `adb.exe`. WSL's `adb` would start a second
- * server, see no devices, and report "no devices attached" — which reads as a
- * broken emulator rather than the wrong tool, and costs an afternoon.
+ * Under WSL2 the emulator is a Windows process and this repository is not, so
+ * every device command goes through Windows' own `adb.exe`. WSL's `adb` would
+ * start a second server, see no devices, and report "no devices attached" —
+ * which reads as a broken emulator rather than the wrong tool, and costs an
+ * afternoon. On native Linux the SDK's own `adb` and `emulator` run directly.
+ * `deviceHost` in `lib/emulator.mjs` decides (override: `MOBILE_DEVICE_HOST`).
  *
  * Subcommands:
  *   doctor          What is up, what is not, and what to run about it.
@@ -26,32 +28,42 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { networkInterfaces } from "node:os";
+import { existsSync, mkdirSync, openSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir, networkInterfaces, release, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // prettier-ignore
-import { AVD_NAME, EXPO_GO_PACKAGE, METRO_PORT, avdConfig, avdIni, bootCompleted, checkoutMismatch, expoGoDeepLink, packageInstalled, parseAttachedDevices, problem, reversedPorts, selectLanHost, selectSdk, toWindowsPath, metroArgs } from "./lib/emulator.mjs";
+import { AVD_NAME, EXPO_GO_PACKAGE, METRO_PORT, avdConfig, avdIni, bootCompleted, checkoutMismatch, deviceHost, expoGoDeepLink, hostTool, packageInstalled, parseAttachedDevices, problem, reversedPorts, selectLanHost, selectSdk, systemImagePackage, toWindowsPath, metroArgs } from "./lib/emulator.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const BOOT_TIMEOUT_SECONDS = 240;
+const HOST = deviceHost({
+  override: process.env["MOBILE_DEVICE_HOST"],
+  kernelRelease: release()
+});
+/* Where a natively launched emulator writes; WSL's owns a Windows window instead. */
+const EMULATOR_LOG = join(tmpdir(), `lectoemocion-emulator-${AVD_NAME}.log`);
 
 /* -- discovery ------------------------------------------------------------ */
 
 /**
- * The Windows-side Android SDK.
+ * The Android SDK the emulator belongs to: Windows-side under WSL.
  *
  * Searched rather than hardcoded: this script is checked in, and the next
  * machine to run it will not have this machine's user name in its paths.
  */
 function findSdk() {
   const candidates = [process.env["ANDROID_SDK_ROOT"], process.env["ANDROID_HOME"]];
-  for (const home of windowsUserDirectories()) {
-    candidates.push(join(home, "AppData", "Local", "Android", "Sdk"));
+  if (HOST === "linux") {
+    candidates.push(join(homedir(), "Android", "Sdk"));
+  } else {
+    for (const home of windowsUserDirectories()) {
+      candidates.push(join(home, "AppData", "Local", "Android", "Sdk"));
+    }
   }
-  const found = selectSdk(candidates, existsSync);
-  if (!found) fail(problem("no-sdk", { searched: candidates.filter(Boolean) }));
+  const found = selectSdk(candidates, existsSync, HOST);
+  if (!found) fail(problem("no-sdk", { host: HOST, searched: candidates.filter(Boolean) }));
   return found;
 }
 
@@ -67,6 +79,12 @@ function windowsUserDirectories() {
 
 function findAvdHome() {
   const configured = process.env["ANDROID_AVD_HOME"];
+  if (HOST === "linux") {
+    /* The emulator's own lookup order; `boot` creates the directory. */
+    if (configured) return configured;
+    const userHome = process.env["ANDROID_USER_HOME"] ?? join(homedir(), ".android");
+    return join(userHome, "avd");
+  }
   if (configured && existsSync(configured)) return configured;
   for (const home of windowsUserDirectories()) {
     const avd = join(home, ".android", "avd");
@@ -74,13 +92,20 @@ function findAvdHome() {
   }
   /* Not a failure: `boot` creates it. Any Windows home will do. */
   const [first] = windowsUserDirectories();
-  if (!first) fail(problem("no-sdk", { searched: ["/mnt/c/Users"] }));
+  if (!first) fail(problem("no-sdk", { host: HOST, searched: ["/mnt/c/Users"] }));
   return join(first, ".android", "avd");
 }
 
 const SDK = findSdk();
-const ADB = join(SDK, "platform-tools", "adb.exe");
-const EMULATOR = join(SDK, "emulator", "emulator.exe");
+const ADB = join(SDK, "platform-tools", hostTool(HOST, "adb"));
+const EMULATOR = join(SDK, "emulator", hostTool(HOST, "emulator"));
+
+/*
+ * `localhost`, not `127.0.0.1`. `expo start --localhost` binds whichever address
+ * `localhost` resolves to first, and on a native Linux host that is `::1`: an
+ * IPv4 probe then reports a running Metro as down.
+ */
+const METRO_STATUS_URL = `http://localhost:${METRO_PORT}/status`;
 
 /* -- the player's dev server ---------------------------------------------- */
 
@@ -124,7 +149,7 @@ function playerServer() {
 /* -- adb ------------------------------------------------------------------ */
 
 function adb(args, { allowFailure = false, binary = false } = {}) {
-  if (!existsSync(ADB)) fail(problem("no-adb", { path: ADB }));
+  if (!existsSync(ADB)) fail(problem("no-adb", { host: HOST, path: ADB }));
   const result = spawnSync(ADB, args, {
     encoding: binary ? "buffer" : "utf8",
     maxBuffer: 64 * 1024 * 1024
@@ -182,20 +207,20 @@ function ensureAvd(name) {
   const iniPath = join(avdHome, `${name}.ini`);
   if (existsSync(avdDir) && existsSync(iniPath)) return { created: false, avdDir };
 
-  const systemImage = join(
-    SDK,
-    "system-images",
-    "android-35",
-    "google_apis_playstore",
-    "x86_64"
-  );
-  if (!existsSync(systemImage)) fail(problem("no-system-image", { path: systemImage }));
+  const systemImage = join(SDK, ...systemImagePackage(HOST).split(";"));
+  if (!existsSync(systemImage)) {
+    fail(problem("no-system-image", { host: HOST, path: systemImage }));
+  }
 
   mkdirSync(avdDir, { recursive: true });
-  writeFileSync(join(avdDir, "config.ini"), avdConfig({ name }), "utf8");
+  writeFileSync(join(avdDir, "config.ini"), avdConfig({ name, host: HOST }), "utf8");
   writeFileSync(
     iniPath,
-    avdIni({ name, avdDirWindowsPath: toWindowsPath(avdDir) }),
+    avdIni({
+      name,
+      avdDirPath: HOST === "wsl" ? toWindowsPath(avdDir) : avdDir,
+      host: HOST
+    }),
     "utf8"
   );
   return { created: true, avdDir };
@@ -204,12 +229,23 @@ function ensureAvd(name) {
 /**
  * Launches the emulator, detached.
  *
- * `Start-Process` rather than a backgrounded child, so the emulator survives
- * this script exiting and owns a normal window on the Windows desktop — the
- * place someone will look when it fails to start.
+ * Under WSL, `Start-Process` rather than a backgrounded child, so the emulator
+ * survives this script exiting and owns a normal window on the Windows desktop
+ * — the place someone will look when it fails to start. On Linux it is a
+ * detached child of its own session, writing to `EMULATOR_LOG`, the place the
+ * boot-timeout message points at.
  */
 function launchEmulator(name) {
-  if (!existsSync(EMULATOR)) fail(problem("no-emulator", { path: EMULATOR }));
+  if (!existsSync(EMULATOR)) fail(problem("no-emulator", { host: HOST, path: EMULATOR }));
+  if (HOST === "linux") {
+    const log = openSync(EMULATOR_LOG, "w");
+    spawn(EMULATOR, ["-avd", name, "-no-boot-anim", "-no-snapshot-save"], {
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: { ...process.env, ANDROID_AVD_HOME: findAvdHome() }
+    }).unref();
+    return;
+  }
   const result = spawnSync(
     "powershell.exe",
     [
@@ -237,7 +273,12 @@ async function waitForBoot() {
     }
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
-  fail(problem("boot-timeout", { seconds: BOOT_TIMEOUT_SECONDS }));
+  fail(
+    problem("boot-timeout", {
+      seconds: BOOT_TIMEOUT_SECONDS,
+      ...(HOST === "linux" ? { log: EMULATOR_LOG } : {})
+    })
+  );
 }
 
 /* -- subcommands ---------------------------------------------------------- */
@@ -296,7 +337,7 @@ async function verifyServers(playerPort, expectedCheckoutId) {
   if (mismatch) fail(mismatch);
   say(`Player dev server up on ${playerPort}, serving this checkout.`);
 
-  if (!(await reachable(`http://127.0.0.1:${METRO_PORT}/status`))) {
+  if (!(await reachable(METRO_STATUS_URL))) {
     fail(problem("metro-down"));
   }
   say(`Metro up on ${METRO_PORT}.`);
@@ -304,6 +345,7 @@ async function verifyServers(playerPort, expectedCheckoutId) {
 
 async function doctor() {
   const { port, checkoutId } = playerServer();
+  line("host", HOST);
   line("sdk", SDK);
   line("adb", existsSync(ADB) ? ADB : "MISSING");
   line("emulator", existsSync(EMULATOR) ? EMULATOR : "MISSING");
@@ -342,7 +384,7 @@ async function doctor() {
   );
   line(
     "metro",
-    (await reachable(`http://127.0.0.1:${METRO_PORT}/status`))
+    (await reachable(METRO_STATUS_URL))
       ? `up on ${METRO_PORT}`
       : `down (expected on ${METRO_PORT})`
   );
@@ -359,9 +401,10 @@ async function up() {
 }
 
 /**
- * Metro, with the environment Expo needs under WSL2.
+ * Metro, with the environment Expo needs.
  *
- * `ADB_PATH` points Expo at Windows' adb so its own device detection works.
+ * `ADB_PATH` points Expo at the host's adb — Windows' under WSL2 — so its own
+ * device detection works.
  * `EXPO_PUBLIC_PLAYER_URL` is passed here rather than written to a `.env`,
  * because the port is derived per checkout: a file would go stale in a worktree
  * and load the wrong checkout's player, which looks exactly like a working app.

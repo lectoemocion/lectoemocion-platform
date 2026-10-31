@@ -1,12 +1,13 @@
 /**
- * Pure logic for driving an Android emulator from WSL2.
+ * Pure logic for driving an Android emulator from WSL2 or native Linux.
  *
- * The emulator runs on the Windows host; this repository lives in WSL2. That
- * split is the reason this file exists as anything more than a shell one-liner:
- * every device command has to go through Windows' own `adb.exe`, because WSL's
- * `adb` would start a second server that sees no devices at all and reports
- * "no devices" rather than "wrong adb" — a failure that reads as a broken
- * emulator and wastes an afternoon.
+ * Under WSL2 the emulator runs on the Windows host and this repository does
+ * not. That split is the reason this file exists as anything more than a shell
+ * one-liner: every device command has to go through Windows' own `adb.exe`,
+ * because WSL's `adb` would start a second server that sees no devices at all
+ * and reports "no devices" rather than "wrong adb" — a failure that reads as a
+ * broken emulator and wastes an afternoon. On native Linux the SDK's own tools
+ * run directly; `deviceHost` decides which of the two this is.
  *
  * Everything here is a pure function over strings so it can be tested without a
  * device. The process spawning, filesystem writes, and HTTP probes live in
@@ -18,6 +19,51 @@ export const AVD_NAME = "LectoEmocion_Tablet";
 
 /** Expo Go's package id, unchanged for years and stable across SDKs. */
 export const EXPO_GO_PACKAGE = "host.exp.exponent";
+
+/**
+ * Where the emulator runs: `wsl` (a Windows process, driven through `adb.exe`)
+ * or `linux` (the SDK's own tools, run directly).
+ *
+ * WSL is recognised by its kernel release, which names Microsoft.
+ * `MOBILE_DEVICE_HOST` overrides, and anything else in it is a stated failure
+ * rather than a guess.
+ */
+export function deviceHost({ override, kernelRelease }) {
+  if (override !== undefined && override !== "") {
+    if (override === "wsl" || override === "linux") return override;
+    throw new Error(`MOBILE_DEVICE_HOST must be 'wsl' or 'linux', not '${override}'.`);
+  }
+  return /microsoft/i.test(kernelRelease) ? "wsl" : "linux";
+}
+
+/** A tool's file name on the host: the Windows SDK's tools carry `.exe`. */
+export function hostTool(host, name) {
+  return host === "wsl" ? `${name}.exe` : name;
+}
+
+/**
+ * The system image a new AVD boots, per host.
+ *
+ * Under WSL it is the Play Store image Android Studio offers by default. On
+ * native Linux it is the image the workstation setup already installs, so a
+ * fresh machine boots the AVD without a separate download. Expo Go needs
+ * neither the Play Store nor a particular API level: Expo installs it itself.
+ */
+export const SYSTEM_IMAGES = {
+  wsl: { api: 35, tag: "google_apis_playstore", display: "Google Play" },
+  linux: { api: 36, tag: "google_apis", display: "Google APIs" }
+};
+
+/** The image's SDK package name: `system-images;android-36;google_apis;x86_64`. */
+export function systemImagePackage(host) {
+  const { api, tag } = SYSTEM_IMAGES[host];
+  return `system-images;android-${api};${tag};x86_64`;
+}
+
+/** The emulator reads AVD paths with the host's own separator. */
+function pathSeparator(host) {
+  return host === "wsl" ? "\\" : "/";
+}
 
 /** Metro's port. Expo's default; nothing here needs it to be configurable. */
 export const METRO_PORT = 8081;
@@ -116,14 +162,16 @@ export function avdConfig({
   ramMb = 4096,
   heapMb = 512,
   cores = 4,
-  systemImage = "system-images\\android-35\\google_apis_playstore\\x86_64\\",
-  target = "android-35"
+  host = "wsl"
 } = {}) {
+  const image = SYSTEM_IMAGES[host];
+  const separator = pathSeparator(host);
+  const systemImage = `${systemImagePackage(host).split(";").join(separator)}${separator}`;
   /* Sorted, because the emulator rewrites this file and a stable order keeps a
    * hand-written config diffable against one the tools have touched. */
   const entries = {
     AvdId: name,
-    "PlayStore.enabled": "true",
+    "PlayStore.enabled": String(image.tag === "google_apis_playstore"),
     "abi.type": "x86_64",
     "avd.ini.displayname": displayName,
     "avd.ini.encoding": "UTF-8",
@@ -167,9 +215,9 @@ export function avdConfig({
     "skin.dynamic": "yes",
     "skin.name": `${width}x${height}`,
     "skin.path": `${width}x${height}`,
-    "tag.display": "Google Play",
-    "tag.id": "google_apis_playstore",
-    target,
+    "tag.display": image.display,
+    "tag.id": image.tag,
+    target: `android-${image.api}`,
     "vm.heapSize": String(heapMb)
   };
 
@@ -178,13 +226,17 @@ export function avdConfig({
     .join("\n")}\n`;
 }
 
-/** The `<name>.ini` beside the `.avd` directory, which points the tools at it. */
-export function avdIni({ name = AVD_NAME, avdDirWindowsPath, target = "android-35" }) {
+/**
+ * The `<name>.ini` beside the `.avd` directory, which points the tools at it.
+ *
+ * `avdDirPath` is the path as the emulator reads it: a Windows path under WSL.
+ */
+export function avdIni({ name = AVD_NAME, avdDirPath, host = "wsl" }) {
   return [
     "avd.ini.encoding=UTF-8",
-    `path=${avdDirWindowsPath}`,
-    `path.rel=avd\\${name}.avd`,
-    `target=${target}`,
+    `path=${avdDirPath}`,
+    `path.rel=avd${pathSeparator(host)}${name}.avd`,
+    `target=android-${SYSTEM_IMAGES[host].api}`,
     ""
   ].join("\n");
 }
@@ -293,21 +345,21 @@ export function selectLanHost(interfaces, override) {
 }
 
 /**
- * The first candidate that is a *Windows* Android SDK.
+ * The first candidate that is an Android SDK for this host.
  *
- * Existence is not the test. This machine has a Linux SDK in
- * `ANDROID_SDK_ROOT`, which exists, is a perfectly good SDK, and is the wrong
- * one: the emulator is a Windows process, so only Windows' `adb.exe` can see
- * it. Selecting on the presence of `adb.exe` is what distinguishes them, and
- * picking the Linux one instead produces "no devices attached" — a message
- * that blames the emulator for a mistake made here.
+ * Existence is not the test. Under WSL a Linux SDK in `ANDROID_SDK_ROOT`
+ * exists, is a perfectly good SDK, and is the wrong one: the emulator is a
+ * Windows process, so only Windows' `adb.exe` can see it. Selecting on the
+ * host's own `adb` is what distinguishes them, and picking the Linux one
+ * instead produces "no devices attached" — a message that blames the emulator
+ * for a mistake made here.
  *
  * `exists` is injected so this is testable without a filesystem.
  */
-export function selectSdk(candidates, exists) {
+export function selectSdk(candidates, exists, host = "wsl") {
   for (const candidate of candidates) {
     if (!candidate) continue;
-    if (exists(`${candidate}/platform-tools/adb.exe`)) return candidate;
+    if (exists(`${candidate}/platform-tools/${hostTool(host, "adb")}`)) return candidate;
   }
   return null;
 }
@@ -351,25 +403,37 @@ export function checkoutMismatch({ expected, actual }) {
 export function problem(kind, detail = {}) {
   switch (kind) {
     case "no-sdk":
-      return [
-        "Android SDK not found on the Windows host.",
-        `  looked in: ${(detail.searched ?? []).join(", ")}`,
-        "→ Install it via Android Studio, or set ANDROID_SDK_ROOT to its path."
-      ].join("\n");
+      return detail.host === "linux"
+        ? [
+            "Android SDK not found.",
+            `  looked in: ${(detail.searched ?? []).join(", ")}`,
+            "→ Install the command-line tools under ~/Android/Sdk, or set ANDROID_HOME to the SDK."
+          ].join("\n")
+        : [
+            "Android SDK not found on the Windows host.",
+            `  looked in: ${(detail.searched ?? []).join(", ")}`,
+            "→ Install it via Android Studio, or set ANDROID_SDK_ROOT to its path."
+          ].join("\n");
     case "no-adb":
-      return [
-        `adb.exe not found at ${detail.path}.`,
-        "→ Install 'Android SDK Platform-Tools' from Android Studio's SDK Manager."
-      ].join("\n");
+      return detail.host === "linux"
+        ? [`adb not found at ${detail.path}.`, "→ sdkmanager platform-tools"].join("\n")
+        : [
+            `adb.exe not found at ${detail.path}.`,
+            "→ Install 'Android SDK Platform-Tools' from Android Studio's SDK Manager."
+          ].join("\n");
     case "no-emulator":
-      return [
-        `emulator.exe not found at ${detail.path}.`,
-        "→ Install 'Android Emulator' from Android Studio's SDK Manager."
-      ].join("\n");
+      return detail.host === "linux"
+        ? [`emulator not found at ${detail.path}.`, "→ sdkmanager emulator"].join("\n")
+        : [
+            `emulator.exe not found at ${detail.path}.`,
+            "→ Install 'Android Emulator' from Android Studio's SDK Manager."
+          ].join("\n");
     case "no-system-image":
       return [
         `System image not found at ${detail.path}.`,
-        "→ Install 'Android 35 · Google Play · x86_64' from Android Studio's SDK Manager."
+        detail.host === "linux"
+          ? `→ sdkmanager "${systemImagePackage("linux")}"`
+          : "→ Install 'Android 35 · Google Play · x86_64' from Android Studio's SDK Manager."
       ].join("\n");
     case "no-device":
       return [
@@ -379,7 +443,9 @@ export function problem(kind, detail = {}) {
     case "boot-timeout":
       return [
         `${AVD_NAME} did not finish booting within ${detail.seconds}s.`,
-        "→ Check the emulator window on the Windows desktop for an error."
+        detail.log
+          ? `→ Read the emulator's log: ${detail.log}`
+          : "→ Check the emulator window on the Windows desktop for an error."
       ].join("\n");
     case "player-down":
       return [
