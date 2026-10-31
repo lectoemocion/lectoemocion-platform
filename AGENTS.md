@@ -192,6 +192,21 @@ logs, analytics, issue reports, and source control.
 - Functions triggered by events are idempotent.
 - Never deploy or create cloud resources without explicit user authorization.
 
+## Setup
+
+From a fresh clone:
+
+```bash
+git submodule update --init   # the shared skills
+mise install                  # Node from .nvmrc; pnpm from packageManager, via corepack
+pnpm install
+pnpm check
+```
+
+Device work also needs the Android SDK — WSL2 drives Android Studio's on the
+Windows host, native Linux uses `~/Android/Sdk` (or `ANDROID_HOME`). See
+[`apps/mobile/AGENTS.md`](apps/mobile/AGENTS.md).
+
 ## Development discipline
 
 - Package manager: `pnpm`; do not introduce npm or yarn lockfiles.
@@ -209,14 +224,20 @@ Run `pnpm commands` for the index. The one that matters is **`pnpm check`** —
 guardrails, typecheck, tests, and build, in that order. It is the same gate CI
 runs.
 
-### Never start long-lived processes
+### Long-lived processes
 
-These run until interrupted. The user owns that loop; starting one leaves you
-blocked and the terminal occupied.
+**Metro and the player's dev server are yours to run** (decided 2026-10-31,
+user) when the task needs the app on a device — to verify a change, read its
+logs, reproduce a bug. Check their ports are free first (`pnpm mobile` reports
+both; if the user's servers already hold them, use theirs), run them in the
+background (`pnpm dev`, `pnpm mobile:start`), and stop them when you are done:
+a server you leave running holds the port the user's next session needs.
 
-- `pnpm dev`, `vite`, or any dev server.
+Still off-limits — these run until interrupted, and the user owns that loop:
+
 - `firebase emulators:start` as a standalone session.
 - Any watch-mode test runner.
+- `pnpm mobile:lan`, which puts the dev server on the network.
 
 If you need output from one, ask the user to run it and paste the relevant
 lines. Ephemeral, self-terminating runs — `pnpm check`, `pnpm test`,

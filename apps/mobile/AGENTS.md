@@ -69,15 +69,20 @@ that guardrail decoration. Add both together or neither.
 
 ## Running it
 
-Never start Metro yourself — it is a long-lived server the user owns.
-
-Two terminals the user owns, then one command that is yours:
+Two long-lived servers, then one command that wires them to the device. The
+root AGENTS.md lets you run the servers in the background, as long as you stop
+them when you are done:
 
 ```bash
 pnpm dev            # the player's dev server, on loopback
 pnpm mobile:start   # Metro; press 'a' once to install Expo Go
 pnpm mobile:up      # boot the AVD, tunnel the ports, open the player
 ```
+
+Metro in the background cannot take the `a` keypress. Install Expo Go yourself
+instead: the APK for the SDK this app pins is `androidClientUrl` under
+`sdkVersions` in `https://exp.host/--/api/v2/versions`; download it and
+`adb install` it.
 
 A physical Android phone plugged in over USB needs nothing new: `boot` returns
 the attached device rather than starting the AVD, so `pnpm mobile:up` wires the
@@ -133,7 +138,24 @@ Reaching a device over the LAN means exposing it to the network, which is what
 `PLAYER_HOST` is for and why it belongs to `pnpm mobile:lan` alone — never to
 the emulator or USB workflow, where it would buy nothing.
 
-### The emulator runs on Windows; this repository does not
+### Two hosts: WSL2 and native Linux
+
+`deviceHost` in [`scripts/lib/emulator.mjs`](../../scripts/lib/emulator.mjs)
+decides which one this is, from the kernel release; `MOBILE_DEVICE_HOST=wsl` or
+`linux` overrides. `pnpm mobile` prints the choice on its first line.
+
+On native Linux the SDK's own `adb` and `emulator` run directly. The SDK is
+`ANDROID_HOME` or `~/Android/Sdk`, the AVD goes where the emulator looks
+(`ANDROID_AVD_HOME`, else `~/.android/avd`), and the new AVD boots the
+`android-36` Google APIs image rather than the Play Store one, because that is
+the image the workstation setup installs. The emulator's log is
+`$TMPDIR/lectoemocion-emulator-LectoEmocion_Tablet.log`.
+
+`expo start --localhost` binds whichever address `localhost` resolves to first,
+which on Linux is `::1`. The script therefore probes Metro at `localhost`, never
+`127.0.0.1`, which would report a running Metro as down.
+
+### Under WSL2 the emulator runs on Windows; this repository does not
 
 Every device command must go through Windows' own `adb.exe`. WSL's `adb` starts
 a second server that sees no devices and says "no devices attached", which reads

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // prettier-ignore
 // @ts-expect-error -- plain .mjs script module, deliberately untyped
-import { AVD_NAME, EXPO_GO_PACKAGE, METRO_PORT, avdConfig, avdIni, bootCompleted, checkoutMismatch, expoGoDeepLink, packageInstalled, parseAttachedDevices, problem, reversedPorts, selectLanHost, selectSdk, toWindowsPath, metroArgs } from "./emulator.mjs";
+import { AVD_NAME, EXPO_GO_PACKAGE, METRO_PORT, avdConfig, avdIni, bootCompleted, checkoutMismatch, deviceHost, expoGoDeepLink, hostTool, packageInstalled, parseAttachedDevices, problem, reversedPorts, selectLanHost, selectSdk, systemImagePackage, toWindowsPath, metroArgs } from "./emulator.mjs";
 
 describe("parseAttachedDevices", () => {
   it("returns serials that are ready", () => {
@@ -132,6 +132,25 @@ describe("avdConfig", () => {
     expect(config).toContain("AvdId=LectoEmocion_Small");
   });
 
+  it("boots the Play Store image under WSL", () => {
+    const config = avdConfig();
+    expect(config).toContain("image.sysdir.1=system-images\\android-35\\google_apis_playstore\\x86_64\\");
+    expect(config).toContain("PlayStore.enabled=true");
+    expect(config).toContain("target=android-35");
+  });
+
+  it("boots the image the Linux workstation installs, with Linux separators", () => {
+    /*
+     * A Windows-style path here is read literally by the Linux emulator, which
+     * then reports a missing system image for an image that is installed.
+     */
+    const config = avdConfig({ host: "linux" });
+    expect(config).toContain("image.sysdir.1=system-images/android-36/google_apis/x86_64/");
+    expect(config).toContain("tag.id=google_apis");
+    expect(config).toContain("PlayStore.enabled=false");
+    expect(config).toContain("target=android-36");
+  });
+
   it("ends with a newline, as ini parsers expect", () => {
     expect(avdConfig().endsWith("\n")).toBe(true);
   });
@@ -139,9 +158,17 @@ describe("avdConfig", () => {
 
 describe("avdIni", () => {
   it("records the Windows path the emulator will read", () => {
-    const ini = avdIni({ avdDirWindowsPath: "C:\\Users\\x\\.android\\avd\\A.avd", name: "A" });
+    const ini = avdIni({ avdDirPath: "C:\\Users\\x\\.android\\avd\\A.avd", name: "A" });
     expect(ini).toContain("path=C:\\Users\\x\\.android\\avd\\A.avd");
     expect(ini).toContain("path.rel=avd\\A.avd");
+    expect(ini).toContain("target=android-35");
+  });
+
+  it("records a plain Linux path, with the Linux image's target, on Linux", () => {
+    const ini = avdIni({ avdDirPath: "/home/x/.android/avd/A.avd", name: "A", host: "linux" });
+    expect(ini).toContain("path=/home/x/.android/avd/A.avd");
+    expect(ini).toContain("path.rel=avd/A.avd");
+    expect(ini).toContain("target=android-36");
   });
 });
 
@@ -345,6 +372,11 @@ describe("selectSdk", () => {
   it("prefers the earlier candidate when several qualify", () => {
     expect(selectSdk([windowsSdk, "/mnt/c/other"], () => true)).toBe(windowsSdk);
   });
+  it("takes the Linux SDK on native Linux, where there is no adb.exe", () => {
+    const hasLinuxAdb = (path: string) => path === `${linuxSdk}/platform-tools/adb`;
+    expect(selectSdk([undefined, linuxSdk], hasLinuxAdb, "linux")).toBe(linuxSdk);
+    expect(selectSdk([windowsSdk], hasWindowsAdb, "linux")).toBeNull();
+  });
 });
 
 describe("checkoutMismatch", () => {
@@ -428,5 +460,56 @@ describe("problem", () => {
 
   it("refuses an unknown kind rather than returning a vague string", () => {
     expect(() => problem("something-else")).toThrow(/Unknown problem/);
+  });
+});
+
+describe("deviceHost", () => {
+  it("recognises WSL by its kernel release", () => {
+    expect(deviceHost({ kernelRelease: "6.6.87.2-microsoft-standard-WSL2" })).toBe("wsl");
+  });
+
+  it("is native Linux on any other kernel", () => {
+    expect(deviceHost({ kernelRelease: "7.2.8-9-omarchy" })).toBe("linux");
+  });
+
+  it("lets MOBILE_DEVICE_HOST win in both directions", () => {
+    expect(deviceHost({ override: "linux", kernelRelease: "6.6-microsoft-standard-WSL2" })).toBe("linux");
+    expect(deviceHost({ override: "wsl", kernelRelease: "7.2.8-omarchy" })).toBe("wsl");
+  });
+
+  it("treats an empty override as unset", () => {
+    expect(deviceHost({ override: "", kernelRelease: "7.2.8-omarchy" })).toBe("linux");
+  });
+
+  it("refuses an override it does not know", () => {
+    expect(() => deviceHost({ override: "windows", kernelRelease: "7.2.8" })).toThrow(/MOBILE_DEVICE_HOST/);
+  });
+});
+
+describe("hostTool", () => {
+  it("adds .exe only for the Windows SDK", () => {
+    expect(hostTool("wsl", "adb")).toBe("adb.exe");
+    expect(hostTool("linux", "adb")).toBe("adb");
+  });
+});
+
+describe("systemImagePackage", () => {
+  it("names an image sdkmanager can install", () => {
+    expect(systemImagePackage("linux")).toBe("system-images;android-36;google_apis;x86_64");
+    expect(systemImagePackage("wsl")).toBe("system-images;android-35;google_apis_playstore;x86_64");
+  });
+});
+
+describe("problem, on Linux", () => {
+  it("names sdkmanager rather than Android Studio for a missing image", () => {
+    const message = problem("no-system-image", { host: "linux", path: "/sdk/system-images" });
+    expect(message).toContain('sdkmanager "system-images;android-36;google_apis;x86_64"');
+    expect(message).not.toContain("Android Studio");
+  });
+
+  it("points a boot timeout at the emulator's log, not a Windows window", () => {
+    const message = problem("boot-timeout", { seconds: 240, log: "/tmp/emulator.log" });
+    expect(message).toContain("/tmp/emulator.log");
+    expect(message).not.toContain("Windows");
   });
 });
