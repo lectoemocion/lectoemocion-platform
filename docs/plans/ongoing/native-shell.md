@@ -2,7 +2,7 @@
 
 **Priority:** medium
 **Gate:** none
-**Next:** build the four seams under "Native feel", and the offline-launch test [ADR 0009](../../decisions/0009-one-hosted-player.md) makes a release criterion
+**Next:** play "El encuentro" through to its reward screen on the Pixel 8 (the one open task, needs a person with the phone); then build the four seams under "Native feel", and the offline-launch test [ADR 0009](../../decisions/0009-one-hosted-player.md) makes a release criterion
 **Landed:** none
 
 ## Handoff
@@ -45,6 +45,9 @@ them:
 - **Handoff:** the hosted-versus-bundled decision is settled — see
   [ADR 0009](../../decisions/0009-one-hosted-player.md). Step 1 points at a dev
   server; a release build points the same variable at Firebase Hosting.
+
+Since 2026-10-31 (`ce22762`) the emulator scripts also run on native Linux, using the SDK in
+`ANDROID_HOME` or `~/Android/Sdk`; WSL2 remains supported.
 
 The earlier WSL2 NAT blocker recorded here is resolved: `.wslconfig` now sets
 `networkingMode=mirrored`. For the emulator and USB paths it stopped mattering
