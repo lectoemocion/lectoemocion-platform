@@ -1,7 +1,7 @@
 # Native shell
 
 **Priority:** medium
-**Gate:** none
+**Gate:** blocked:Álvaro plays "El encuentro" through to its reward screen on the Pixel 8 (`pnpm mobile:lan`) and ticks the last task
 **Next:** play "El encuentro" through to its reward screen on the Pixel 8 (the one open task, needs a person with the phone); then build the four seams under "Native feel", and the offline-launch test [ADR 0009](../../decisions/0009-one-hosted-player.md) makes a release criterion
 **Landed:** none
 
