@@ -197,7 +197,6 @@ logs, analytics, issue reports, and source control.
 From a fresh clone:
 
 ```bash
-git submodule update --init   # the shared skills
 mise install                  # Node from .nvmrc; pnpm from packageManager, via corepack
 pnpm install
 pnpm check
@@ -338,10 +337,12 @@ Here, also:
 Read the code first. No drip-feed of clarifying questions, no mid-flight progress reports.
 
 - **`ship-a-feature` and `managing-plans-lifecycle` are shared, not local.**
-  `ship-a-feature` is a symlink into the `.agents/_shared` submodule; `managing-plans-lifecycle` is vendored from agent-plans (see `.agents/README.md`). The [agent-skills](https://github.com/ghostaff-ai/agent-skills) submodule is consumed by several repos. **Do not edit them to fix something about this
-  repo** — they carry procedure only. Every LectoEmoción-specific value lives
-  here and in `.agents/land.config.json`. Run `git submodule update --init`
-  after cloning, or the skills are empty.
+  `ship-a-feature` is a symlink into `.agents/_shared`, a committed copy of
+  [agent-skills](https://github.com/ghostaff-ai/agent-skills) (pin:
+  `.agents/_shared/VENDORED.md`); `managing-plans-lifecycle` is vendored from agent-plans
+  (see `.agents/README.md`). Both are shared with other repos. **Do not edit them to fix
+  something about this repo** — they carry procedure only. Every LectoEmoción-specific
+  value lives here and in `.agents/land.config.json`.
 - **Land with `pnpm pr:land`**, never a hand-rolled `gh pr merge` — the script
   carries the vacuous-green, staleness and hard-stop checks a manual merge
   silently skips. Run it, act on the exit code, run it again: `0` merged ·
