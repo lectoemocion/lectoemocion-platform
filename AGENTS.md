@@ -307,34 +307,35 @@ speculative, long-running, or parallel gets a worktree.
 
 ## Be proactive
 
-Surface these as a one-line suggestion at the end of your response — or as an
-inline change when it is under about ten lines — whenever you notice:
+<!-- base:proactive -->
+You're expected to **propose improvements, not just execute tasks**. End your response with a one-line suggestion (or inline diff if the change is under ~10 lines) when you notice:
+
+- **Repeated manual ops (2+ times)** → a script or task-runner target.
+- **Encodable workflow** (a release, a debug recipe, a verification loop) → skill under `.agents/skills/<name>/SKILL.md`.
+- **Convention used in 3+ places but undocumented** → addition to the `AGENTS.md` for that tree, or a new deeper one so agents working there don't load the whole root file.
+- **Single source of truth violated** (a duplicated constant, path, id or enum) → consolidate in the same PR if small, propose a follow-up if not.
+- **Docs contradicting code** → fix or delete the doc; don't work around it.
+- **Shipped plan still in `docs/plans/ongoing/`** → retire it as the `managing-plans-lifecycle` skill says: delete by default, keep only rationale nobody could re-derive.
+- **Code touched without tests** → propose adding the missing coverage.
+- **Friction with tooling** (slow command, repeated permission prompts, missing alias) → propose the fix.
+- **The same correction a second time** → propose the script, lint or check that makes the mistake impossible, before another written rule. Nothing fails when an agent skips a sentence.
+
+Soft proposals are the default — the user accepts or declines. Don't pre-implement large refactors uninvited; surface, then wait.
+<!-- /base:proactive -->
+
+Here, also:
 
 - **An invariant with no guardrail** → propose the check and its rule test.
-- **A manual procedure done twice** → a script under `scripts/`.
-- **An encodable workflow** (a migration ritual, an audit playbook) → a skill
-  under `.agents/skills/<name>/SKILL.md`.
-- **A convention used in three or more places but undocumented** → an addition
-  here, or a scoped `AGENTS.md` in that directory so agents working there do
-  not load this whole file.
-- **A single source of truth violated** (a duplicated shape, status string,
-  threshold, or colour) → consolidate in the same change if small.
-- **Documentation contradicting code** → fix or delete the document; never work
-  around it.
-- **A shipped plan still in `docs/plans/ongoing/`** → distil the durable
-  rationale into `docs/decisions/`, then delete the plan.
 - **A guardrail that would not have caught the bug you just fixed** → propose
   strengthening it.
 
-
 ## Autonomy contract
 
-**The user is a decider, not a merge gate.** A change should cost them two
-messages: their request, and one decision. The `ship-a-feature` skill owns the
-procedure — read the code first, then send **one** message carrying every
-business and technical question with a recommended pick on each, and take `go`
-as "take all your picks". No drip-feed of clarifying questions, no mid-flight
-progress reports.
+<!-- base:autonomy -->
+**The user is a decider, not a merge gate.** A change should cost them two messages: their request, and one decision. The `ship-a-feature` skill owns the full procedure — front-load every business and technical question into ONE message with your recommended pick on each, take `go` as "all your picks", then implement and land without further check-ins.
+<!-- /base:autonomy -->
+
+Read the code first. No drip-feed of clarifying questions, no mid-flight progress reports.
 
 - **`ship-a-feature` and `managing-plans-lifecycle` are shared, not local.**
   `ship-a-feature` is a symlink into the `.agents/_shared` submodule; `managing-plans-lifecycle` is vendored from agent-plans (see `.agents/README.md`). The [agent-skills](https://github.com/alvaro-francisco-gil/agent-skills) submodule is consumed by several repos. **Do not edit them to fix something about this
@@ -386,6 +387,12 @@ applies.
 
 ## Shared agent setup
 
+<!-- base:setup -->
 `AGENTS.md` is the shared instruction entry point. Project skills live in
 `.agents/skills/`; `.claude/skills` points to that directory. See
 [`.agents/README.md`](.agents/README.md) for discovery requirements and dependencies.
+
+Text between `<!-- base:… -->` markers in this file is a copy of a section of
+[agent-skills `base/`](https://github.com/alvaro-francisco-gil/agent-skills/tree/main/base).
+Change it there, never here: the next sync overwrites a local edit.
+<!-- /base:setup -->
