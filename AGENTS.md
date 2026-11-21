@@ -338,7 +338,7 @@ Here, also:
 Read the code first. No drip-feed of clarifying questions, no mid-flight progress reports.
 
 - **`ship-a-feature` and `managing-plans-lifecycle` are shared, not local.**
-  `ship-a-feature` is a symlink into the `.agents/_shared` submodule; `managing-plans-lifecycle` is vendored from agent-plans (see `.agents/README.md`). The [agent-skills](https://github.com/alvaro-francisco-gil/agent-skills) submodule is consumed by several repos. **Do not edit them to fix something about this
+  `ship-a-feature` is a symlink into the `.agents/_shared` submodule; `managing-plans-lifecycle` is vendored from agent-plans (see `.agents/README.md`). The [agent-skills](https://github.com/ghostaff-ai/agent-skills) submodule is consumed by several repos. **Do not edit them to fix something about this
   repo** — they carry procedure only. Every LectoEmoción-specific value lives
   here and in `.agents/land.config.json`. Run `git submodule update --init`
   after cloning, or the skills are empty.
@@ -393,6 +393,6 @@ applies.
 [`.agents/README.md`](.agents/README.md) for discovery requirements and dependencies.
 
 Text between `<!-- base:… -->` markers in this file is a copy of a section of
-[agent-skills `base/`](https://github.com/alvaro-francisco-gil/agent-skills/tree/main/base).
+[agent-skills `base/`](https://github.com/ghostaff-ai/agent-skills/tree/main/base).
 Change it there, never here: the next sync overwrites a local edit.
 <!-- /base:setup -->
